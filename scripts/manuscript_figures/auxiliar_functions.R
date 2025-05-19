@@ -539,6 +539,325 @@ ORA2=function(list_query,list_terms, x_lab="", y_lab="", y_elements_to_highlight
   }
   return(list(data_to_plot,p,p2))
 }  
+
+ORA2_rev=function(list_query,list_terms, x_lab="", y_lab="", y_elements_to_highlight=NULL, col_rect_highlight="gray", order="both"){
+  
+  library(viridis)
+  library(enrichplot)
+  library(clusterProfiler)
+  
+  # Term to gene data frame
+  c1 <- vector()
+  c2 <- vector()
+  for(i in 1:length(list_terms)){
+    c1 <- c(c1,rep(names(list_terms)[i],length(list_terms[[i]])))
+    c2 <- c(c2,list_terms[[i]])
+  }
+  Gx_GeneSet_x2 <- data.frame(term=c1,gene=c2)
+  
+  
+  #ORA for each cell type
+  ORA_Padj <- vector()
+  ORA_GeneRatio <- vector()
+  ORA_GR <- vector()
+  ORA_Bg <- vector()
+  
+  Give_GR <- function(x) {
+    if (!is.na(x)){
+      separate <- strsplit(x, "/")
+      division <- as.numeric(separate[[1]][1]) / as.numeric(separate[[1]][2])
+      return(division)
+    } else {
+      return(NA)
+    }
+  }
+  
+  for(i in 1:length(list_query)){
+    target_genes <- unique(list_query[[i]])
+    
+    ora_output <- enricher(gene = target_genes, 
+                           pvalueCutoff = 1, 
+                           pAdjustMethod = "BH",
+                           minGSSize = 10, 
+                           maxGSSize = 10000, 
+                           qvalueCutoff = 1, 
+                           TERM2GENE = Gx_GeneSet_x2, 
+                           TERM2NAME = NA)
+    ora_output_ord <- ora_output@result[names(list_terms),]
+    ORA_Padj <- c(ORA_Padj, log10(ora_output_ord$p.adjust)*-1)
+    ORA_GeneRatio <- c(ORA_GeneRatio,sapply(ora_output_ord$GeneRatio,Give_GR))
+    ORA_GR <-  c(ORA_GR, ora_output_ord$GeneRatio)
+    ORA_Bg <-  c(ORA_Bg, ora_output_ord$BgRatio)
+  }
+  
+  ORA_Padj[ORA_Padj>10] <- 10
+  
+  data_to_plot <- data.frame(Cell=factor(rep(names(list_query),each=length(list_terms)),levels = names(list_query)), 
+                             Group=factor(rep(names(list_terms), length(list_query)), levels=names(list_terms)),
+                             Gene_ratio = ORA_GR,
+                             Bg_ratio = ORA_Bg,
+                             GR=as.numeric(ORA_GeneRatio),
+                             Padj=ORA_Padj)
+  
+  data_to_plot <- data_to_plot[!data_to_plot$Cell=="global",]
+  
+  if(order=="GR"){
+    dd <- matrix(NA,
+                 ncol=length(levels(data_to_plot$Cell)),
+                 nrow=length(levels(data_to_plot$Group)),
+                 dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd[,i] <- data_to_plot$GR[data_to_plot$Cell==i]
+    }
+    
+    dd[is.na(dd)] <- 0
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  
+  if(order=="pval"){
+    dd <- matrix(NA,
+                 ncol=length(levels(data_to_plot$Cell)),
+                 nrow=length(levels(data_to_plot$Group)),
+                 dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd[,i] <- data_to_plot$Padj[data_to_plot$Cell==i]
+    }
+    
+    dd[is.na(dd)] <- 0
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  if(order=="both"){
+    dd1 <- matrix(NA,
+                  ncol=length(levels(data_to_plot$Cell)),
+                  nrow=length(levels(data_to_plot$Group)),
+                  dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd1[,i] <- data_to_plot$Padj[data_to_plot$Cell==i]
+    }
+    
+    dd1[is.na(dd1)] <- 0
+    
+    dd2 <- matrix(NA,
+                  ncol=length(levels(data_to_plot$Cell)),
+                  nrow=length(levels(data_to_plot$Group)),
+                  dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd2[,i] <- data_to_plot$GR[data_to_plot$Cell==i]
+    }
+    
+    dd2[is.na(dd2)] <- 0
+    
+    dd <- dd2*dd1
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  myPalette <- colorRampPalette(viridis(12))
+  
+  data_to_plot2 <- data_to_plot
+  data_to_plot2$Padj[data_to_plot2$Padj<1.3] <- 0
+  
+  aa <- by(data_to_plot2$Padj,data_to_plot2$Group,sum, na.rm=TRUE)
+  TF_to_keep <- names(aa)[aa>0]
+  data_to_plot3 <- data_to_plot2[data_to_plot2$Group%in%TF_to_keep,]
+  data_to_plot3$Group <- droplevels(data_to_plot3$Group)
+  
+  p <- ggplot(data_to_plot3, aes(x=Cell, y=Group)) +
+    geom_count(mapping=aes(color=GR, size=Padj))+
+    scale_colour_gradientn(colours = myPalette(100))+
+    scale_size(range = c(0, 5), limits = c(1,10))+
+    labs(color='Gene Ratio', size="-log(p.adj)")+
+    xlab(x_lab) +
+    ylab(y_lab) +
+    scale_y_discrete(limits=rev)+
+    theme_bw()+
+    theme(axis.text.x = element_text(angle = -45, hjust=1),
+          plot.margin = unit(c(1,1,1,1), "cm"))+
+    scale_x_discrete(position = "top")
+  
+  p2 <- NULL
+  if(!is.null(y_elements_to_highlight)){
+    sel <- which(rev(levels(p$data$Group))%in%y_elements_to_highlight)
+    p2 <- p
+    for(i in 1:length(sel)){
+      p2 <- p2 + annotate("rect",xmin = 0, xmax = 9, ymin = sel[i]-0.5, ymax = sel[i]+0.5, fill = col_rect_highlight, alpha = 0.2)
+    }
+  }
+  return(list(data_to_plot,p,p2))
+}  
+
+
+ORA2_rev2=function(list_query,list_terms, x_lab="", y_lab="", TF_order, y_elements_to_highlight=NULL, col_rect_highlight="gray", order="both"){
+  
+  library(viridis)
+  library(enrichplot)
+  library(clusterProfiler)
+  
+  # Term to gene data frame
+  c1 <- vector()
+  c2 <- vector()
+  for(i in 1:length(list_terms)){
+    c1 <- c(c1,rep(names(list_terms)[i],length(list_terms[[i]])))
+    c2 <- c(c2,list_terms[[i]])
+  }
+  Gx_GeneSet_x2 <- data.frame(term=c1,gene=c2)
+  
+  
+  #ORA for each cell type
+  ORA_Padj <- vector()
+  ORA_GeneRatio <- vector()
+  ORA_GR <- vector()
+  ORA_Bg <- vector()
+  
+  Give_GR <- function(x) {
+    if (!is.na(x)){
+      separate <- strsplit(x, "/")
+      division <- as.numeric(separate[[1]][1]) / as.numeric(separate[[1]][2])
+      return(division)
+    } else {
+      return(NA)
+    }
+  }
+  
+  for(i in 1:length(list_query)){
+    target_genes <- unique(list_query[[i]])
+    
+    ora_output <- enricher(gene = target_genes, 
+                           pvalueCutoff = 1, 
+                           pAdjustMethod = "BH",
+                           minGSSize = 10, 
+                           maxGSSize = 10000, 
+                           qvalueCutoff = 1, 
+                           TERM2GENE = Gx_GeneSet_x2, 
+                           TERM2NAME = NA)
+    ora_output_ord <- ora_output@result[names(list_terms),]
+    ORA_Padj <- c(ORA_Padj, log10(ora_output_ord$p.adjust)*-1)
+    ORA_GeneRatio <- c(ORA_GeneRatio,sapply(ora_output_ord$GeneRatio,Give_GR))
+    ORA_GR <-  c(ORA_GR, ora_output_ord$GeneRatio)
+    ORA_Bg <-  c(ORA_Bg, ora_output_ord$BgRatio)
+  }
+  
+  ORA_Padj[ORA_Padj>10] <- 10
+  
+  data_to_plot <- data.frame(Cell=factor(rep(names(list_query),each=length(list_terms)),levels = names(list_query)), 
+                             Group=factor(rep(names(list_terms), length(list_query)), levels=names(list_terms)),
+                             Gene_ratio = ORA_GR,
+                             Bg_ratio = ORA_Bg,
+                             GR=as.numeric(ORA_GeneRatio),
+                             Padj=ORA_Padj)
+  
+  data_to_plot <- data_to_plot[!data_to_plot$Cell=="global",]
+  
+  if(order=="GR"){
+    dd <- matrix(NA,
+                 ncol=length(levels(data_to_plot$Cell)),
+                 nrow=length(levels(data_to_plot$Group)),
+                 dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd[,i] <- data_to_plot$GR[data_to_plot$Cell==i]
+    }
+    
+    dd[is.na(dd)] <- 0
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  
+  if(order=="pval"){
+    dd <- matrix(NA,
+                 ncol=length(levels(data_to_plot$Cell)),
+                 nrow=length(levels(data_to_plot$Group)),
+                 dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd[,i] <- data_to_plot$Padj[data_to_plot$Cell==i]
+    }
+    
+    dd[is.na(dd)] <- 0
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  if(order=="both"){
+    dd1 <- matrix(NA,
+                  ncol=length(levels(data_to_plot$Cell)),
+                  nrow=length(levels(data_to_plot$Group)),
+                  dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd1[,i] <- data_to_plot$Padj[data_to_plot$Cell==i]
+    }
+    
+    dd1[is.na(dd1)] <- 0
+    
+    dd2 <- matrix(NA,
+                  ncol=length(levels(data_to_plot$Cell)),
+                  nrow=length(levels(data_to_plot$Group)),
+                  dimnames = list(levels(data_to_plot$Group),levels(data_to_plot$Cell)))
+    
+    for(i in levels(data_to_plot$Cell)){
+      dd2[,i] <- data_to_plot$GR[data_to_plot$Cell==i]
+    }
+    
+    dd2[is.na(dd2)] <- 0
+    
+    dd <- dd2*dd1
+    rr <- hclust(dist(dd))
+    
+    data_to_plot$Group <- factor(data_to_plot$Group, levels=rownames(dd)[rr$order])
+  }
+  
+  data_to_plot$Group <- factor(data_to_plot$Group, levels=TF_order)
+  
+  myPalette <- colorRampPalette(viridis(12))
+  
+  data_to_plot2 <- data_to_plot
+  data_to_plot2$Padj[data_to_plot2$Padj<1.3] <- 0
+  
+  aa <- by(data_to_plot2$Padj,data_to_plot2$Group,sum, na.rm=TRUE)
+  TF_to_keep <- names(aa)[aa>0]
+  data_to_plot3 <- data_to_plot2[data_to_plot2$Group%in%TF_to_keep,]
+  data_to_plot3$Group <- droplevels(data_to_plot3$Group)
+  
+  p <- ggplot(data_to_plot3, aes(x=Cell, y=Group)) +
+    geom_count(mapping=aes(color=GR, size=Padj))+
+    scale_colour_gradientn(colours = myPalette(100))+
+    scale_size(range = c(0, 5), limits = c(1,10))+
+    labs(color='Gene Ratio', size="-log(p.adj)")+
+    xlab(x_lab) +
+    ylab(y_lab) +
+    scale_y_discrete(limits=rev)+
+    theme_bw()+
+    theme(axis.text.x = element_text(angle = -45, hjust=1),
+          plot.margin = unit(c(1,1,1,1), "cm"))+
+    scale_x_discrete(position = "top")
+  
+  p2 <- NULL
+  if(!is.null(y_elements_to_highlight)){
+    sel <- which(rev(levels(p$data$Group))%in%y_elements_to_highlight)
+    p2 <- p
+    for(i in 1:length(sel)){
+      p2 <- p2 + annotate("rect",xmin = 0, xmax = 9, ymin = sel[i]-0.5, ymax = sel[i]+0.5, fill = col_rect_highlight, alpha = 0.2)
+    }
+  }
+  return(list(data_to_plot,p,p2))
+}  
+
+
 # ----------------------------------------------------------------------------- #
 
 

@@ -441,6 +441,7 @@ pdf(paste0(format(Sys.time(), "%Y%m%d"),"_bcell_mice_expression_biomarkers.pdf")
 mice_exprs_pattern
 dev.off()
 # ------------------------------------------------------------------------------------ #
+
 # Figure S6 - Panel A -----------------------------------------------------------------
 # Heatmap representation of genes included in the GRN (n=7,310 genes).
 
@@ -750,6 +751,146 @@ dev.off()
 
 
 # Figure S7 - Panel A -----------------------------------------------------------------
+#  Regulon activity, based on RNA-Seq expression score based on GSVA and TF expression.
+# (Similar to plot from SCENIC+)
+# Heat map/dot-plot showing, for each TF regulon with an activator profile, 
+# the TF expression on a color scale and the Regulon Specificity Score (RSS) of target regions on a size scale.
+
+# >>> Required packages
+library(GSVA)
+library(ComplexHeatmap)
+library(BuenColors)
+library(ggplot2)
+library(reshape2)
+
+# >>> Required auxiliar functions
+source(paste0(data_wd,"/auxiliar_functions.R"))
+
+# >>> Input data
+# Gene Expression data
+rna <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_norm_data.rds"))
+rna_metadata <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_metadata.rds"))
+rna_anno <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_gene_annotation.rds"))
+# GRN data
+tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/tf_ocr_gene_interactions_curated.txt"),
+                          sep="\t",
+                          dec=",",
+                          header=TRUE)
+
+# >>> Computing
+# Get the list of TFs in the B-cell GRN
+tf_regulons <- unique(tf_ocr_gene[,c("tf_symbol","tf_ensembl")])
+
+# Compute the accessibility of the atac for each regulon spliting by positive/negative correlation
+gsva_tf_regulons_pos_mean <- matrix(NA, nrow=nrow(tf_regulons), ncol=length(levels(rna_metadata$CellType)),
+                                    dimnames = list(tf_regulons$tf_ensembl, levels(rna_metadata$CellType)))
+gsva_tf_regulons_neg_mean <- matrix(NA, nrow=nrow(tf_regulons), ncol=length(levels(rna_metadata$CellType)),
+                                    dimnames = list(tf_regulons$tf_ensembl, levels(rna_metadata$CellType)))
+gsva_tf_regulons_pos <- matrix(NA, nrow=nrow(tf_regulons), ncol=ncol(rna),
+                               dimnames = list(tf_regulons$tf_ensembl, colnames(rna)))
+gsva_tf_regulons_neg <- matrix(NA, nrow=nrow(tf_regulons), ncol=ncol(rna),
+                               dimnames = list(tf_regulons$tf_ensembl, colnames(rna)))
+for(i in tf_regulons$tf_ensembl){
+  #Identify the TF-regulon
+  target_tf_regulon <- tf_ocr_gene[tf_ocr_gene$tf_ensembl==i,]
+  dim(target_tf_regulon)
+  # Select positive regulation
+  target_tf_regulon_pos <- target_tf_regulon[target_tf_regulon$gene_tf_rho>0,]
+  dim(target_tf_regulon_pos)
+  # Select negative regulation
+  target_tf_regulon_neg <- target_tf_regulon[target_tf_regulon$gene_tf_rho<0,]
+  dim(target_tf_regulon_neg)
+  # Compute the GSVA on CREs for pos/neg regulons
+  gs <- list(pos=unique(target_tf_regulon_pos$gene_ensembl),
+             neg=unique(target_tf_regulon_neg$gene_ensembl))
+  gsvaPar <- gsvaParam(as.matrix(rna), gs)
+  gsva.es <- gsva(gsvaPar, verbose=FALSE)
+  gsva_mean_by_celltype <- apply(gsva.es,1,FUN=function(x){
+    mm <- by(x,rna_metadata$CellType,mean)
+    return(as.numeric(mm))
+  })
+  rownames(gsva_mean_by_celltype) <- levels(rna_metadata$CellType)
+  gsva_tf_regulons_pos_mean[i,] <- gsva_mean_by_celltype[,"pos"]
+  gsva_tf_regulons_neg_mean[i,] <- gsva_mean_by_celltype[,"neg"]
+  gsva_tf_regulons_pos[i,] <- gsva.es["pos",]
+  gsva_tf_regulons_neg[i,] <- gsva.es["neg",]
+}
+
+# Defined thresholds: 0.2
+## Binarize the rna_seq matrix
+
+gsva_tf_regulons_pos_binary <- matrix(0, nrow=nrow(tf_regulons), ncol=ncol(rna),
+                                      dimnames = list(tf_regulons$tf_ensembl, colnames(rna)))
+
+gsva_tf_regulons_pos_binary[gsva_tf_regulons_pos>0.2] <- 1
+rownames(gsva_tf_regulons_pos_binary) <- tf_regulons$tf_symbol
+
+gsva_tf_regulons_neg_binary <- matrix(0, nrow=nrow(tf_regulons), ncol=ncol(rna),
+                                      dimnames = list(tf_regulons$tf_ensembl, colnames(rna)))
+
+gsva_tf_regulons_neg_binary[gsva_tf_regulons_neg>0.2] <- 1
+rownames(gsva_tf_regulons_neg_binary) <- tf_regulons$tf_symbol
+
+# Calculates Regulon specificity score (RSS)
+rrs_pos <- calculate_rss(metadata=rna_metadata, binary_regulons=gsva_tf_regulons_pos_binary, cell_type_column="CellType")
+rrs_neg <- calculate_rss(metadata=rna_metadata, binary_regulons=gsva_tf_regulons_neg_binary, cell_type_column="CellType")
+
+# >>> Plotting
+# Z-score norm RNA
+data_to_plot <- t(scale(t(rna)))
+rna_anno2 <- rna_anno[rownames(data_to_plot),]
+table(rownames(data_to_plot)==rna_anno2$ensembl_gene_id)
+rownames(data_to_plot) <- rna_anno2$hgnc_symbol
+data_to_plot <- data_to_plot[rownames(data_to_plot)%in%tf_regulons$tf_symbol,]
+
+# Mean z-score norm RNA
+data_to_plot2 <- apply(data_to_plot,1,FUN=function(x){a <- by(x,rna_metadata$CellType,mean); return(as.numeric(a))})
+rownames(data_to_plot2) <- levels(rna_metadata$CellType)
+data_to_plot2 <- t(data_to_plot2)
+
+data1 <- melt(data_to_plot2)
+
+for(i in 1:nrow(data1)){
+  data1$rrs_pos[i] <- rrs_pos$RSS[which(rrs_pos$regulon==data1$Var1[i] & rrs_pos$cell_type==data1$Var2[i])]
+  data1$rrs_neg[i] <- rrs_neg$RSS[which(rrs_neg$regulon==data1$Var1[i] & rrs_neg$cell_type==data1$Var2[i])]
+}
+
+# Plot colors
+bcell_colors <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/bcell_colors.rds"))
+
+# Get the data clustering based on positive RSS
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulons_group_plot <- c(rep("1",length(regulons_list[[1]])),rep("2",length(regulons_list[[2]])),
+                         rep("3",length(regulons_list[[3]])),rep("4",length(regulons_list[[4]])),rep("5",length(regulons_list[[5]])))
+names(regulons_group_plot) <- c(regulons_list[[1]],regulons_list[[2]],regulons_list[[3]],regulons_list[[4]],regulons_list[[5]])
+regulons_color <- c("1"="#92c5de","2"="#2166ac","3"="#91cf60","4"="#dd1c77","5"="black")
+
+
+# Include the cluster info in the formatted data to plot (data1)
+data1$Var1 <- factor(data1$Var1, levels=rev(c(rev(regulons_list[[1]]),rev(regulons_list[[2]]),rev(regulons_list[[3]]),rev(regulons_list[[4]]),rev(regulons_list[[5]]))))
+
+# Plot
+# RSS tf-gene positively correlated (putative activator TFs)
+ht_pos <- ggplot(data=data1, mapping=aes(x=Var2, y=Var1)) + 
+  geom_raster(aes(fill=value)) +
+  scale_fill_gradientn(colors=jdb_palette("brewer_celsius")) +
+  geom_point(mapping=aes(size=rrs_pos), color="black") +
+  scale_radius(range=c(min.size=0.1, max.size=2)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(), axis.title.y=element_blank(), 
+        axis.text.x=element_text(angle=90, hjust=1, size=6),
+        axis.text.y=element_text(size=6))
+
+ggsave(plot = ht_pos, width = 4, height = 14, filename = paste0(format(Sys.time(), "%Y%m%d"),"_gene_RSS_tf_exprss_pos.pdf")) 
+# ------------------------------------------------------------------------------------ #
+
+
+
+
+
+
+
+# Figure S7 - Panel B -----------------------------------------------------------------
 # Heatmap representation of gene expression for TF regulators of EBF1.
 
 # >>> Required packages
@@ -816,7 +957,7 @@ dev.off()
 
 
 
-# Figure S7 - Panel B -----------------------------------------------------------------
+# Figure S7 - Panel C -----------------------------------------------------------------
 # Heatmap representation of gene expression for TF regulated by EBF1.
 
 # >>> Required packages
@@ -890,7 +1031,7 @@ dev.off()
 
 
 
-# Figure S7 - Panel C,D & Table S7 -----------------------------------------------------------------
+# Figure S7 - Panel D,E & Table S7 -----------------------------------------------------------------
 # Representation of the enriched GO terms derived from the pathway analysis of the EBF1-regulon-activated genes and EBF1-regulon-repressed genes for each csGRN.
 
 # >>> Required packages
@@ -987,11 +1128,59 @@ dev.off()
 
 
 
-# Figure S9 - Panel A -----------------------------------------------------------------
+
+# Figure S9 - Panel A-C -----------------------------------------------------------------
+# >>> Exploratory analysis Li dataset
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Li))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], ALL_subgroup=ball_metadata_Li$mutation, batch=ball_metadata_Li$batch, age=ball_metadata_Li$age)
+
+# Plotting
+# Plot colors
+ball_colors <- jdb_palette("corona", length(levels(ball_metadata_Li$mutation)))
+names(ball_colors) <- levels(ball_metadata_Li$mutation)
+
+age_color <- c("Paediatric"="#DAA520","Adult"="#2F4F4F")
+
+
+# Plot
+p_subgroup <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = ALL_subgroup)) +
+  geom_point(size=3) +
+  scale_color_manual(values=ball_colors) +
+  labs(title="B-ALL Li J. multi-dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+p_batch <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = batch)) +
+  geom_point(size=3) +
+  labs(title="B-ALL Li J. multi-dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+p_age <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = age)) +
+  geom_point(size=3) +
+  scale_color_manual(values=age_color) +
+  labs(title="B-ALL Li J. multi-dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Li.pdf",sep=""), width=6, height = 6)
+print(p_subgroup)
+print(p_subgroup+theme(legend.position = "none"))
+print(p_batch)
+print(p_batch+theme(legend.position = "none"))
+print(p_age)
+print(p_age+theme(legend.position = "none"))
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
+
+
+
+# Figure S9 - Panel D -----------------------------------------------------------------
 # B-ALL subtypes signatures
 # Heatmap representation of 5,749 genes defining the signature profile of the B-ALL subtypes. 
 # Biomarker genes for each B-ALL subtype were derived from 
-# significant genes (logFC≥1.5 and adjusted p-value≤0.05) in at least 4 contrasts (see methods).
+# significant genes (logFC≥1.5 and adjusted p-value≤0.05) in at least 6 contrasts (see methods).
 
 # >>> Required packages
 library(ComplexHeatmap)
@@ -999,46 +1188,49 @@ library(BuenColors)
 library(tidyverse)
 
 # >>> Input data
-# B-ALL Gene Expression data
-ball_rna <- readRDS(paste0(data_wd,"/osfstorage-archive/05_B-ALL/ball_rna_norm_data.rds"))
-ball_metadata <- readRDS(paste0(data_wd,"/osfstorage-archive/05_B-ALL/ball_metadata.rds"))
-# Human B-ALL subtype biomarkers
+# B-ALL Gene Expression data: Li dataset
+load("BALL_Li.RData", verbose=TRUE)
+
+# Human B-ALL subtype biomarkers derived from Li dataset
 ball_biomarkers <- readRDS(paste0(data_wd,"/osfstorage-archive/05_B-ALL/ALL_subgroup_biomarkers.rds"))
+#ball_biomarkers <- readRDS("ALL_subgroup_biomarkers.rds")
+str(ball_biomarkers)
 
-ball_metadata$subgroup <- recode_factor(ball_metadata$subgroup, 
-                                   G1="MEF2D fusions",
-                                   G2="TCF3-PBX1",
-                                   G3="ETV6-RUNX1/like",
-                                   G4="DUX4 fusions",
-                                   G5="ZNF384 fusions",
-                                   G6="BCR-ABL1/ph-like",
-                                   G7="Hyperdiploidy",
-                                   G8="KTM2A fusions")
-
-data_to_plot <- ball_rna[rownames(ball_rna)%in%unique(unlist(ball_biomarkers)),]
+data_to_plot <- ball_norm_rna_Li[rownames(ball_norm_rna_Li)%in%unique(unlist(ball_biomarkers)),]
 
 # >>> Plotting
 # Plot colors
-ball_colors <- jdb_palette("corona", length(levels(ball_metadata$subgroup)))
-names(ball_colors) <- levels(ball_metadata$subgroup)
+ball_colors <- jdb_palette("corona", length(levels(ball_metadata_Li$mutation)))
+names(ball_colors) <- levels(ball_metadata_Li$mutation)
 
-# Plot
-BALL_subgoups_markers_heatmap <- Heatmap(t(scale(t(data_to_plot))),
-                                         top_annotation = HeatmapAnnotation(stage = ball_metadata$"subgroup",
-                                                                            col = list(stage = ball_colors)),
-                                         show_row_names = FALSE,
-                                         show_column_names = FALSE,
-                                         show_row_dend = FALSE
-)
+Zscore <- t(scale(t(ball_norm_rna_Li[biomarkers_BALL,]))) 
+dim(Zscore)
+
+cols <- jdb_palette("solar_extra")
+col_fun <- colorRamp2(seq(-4, 4, length.out = length(cols)), cols)
+
+h_BALL_biomarkers_scaled <- Heatmap(Zscore,
+                                    top_annotation = HeatmapAnnotation("B-ALL subtype" = ball_metadata_Li$mutation,
+                                                                       col=list("B-ALL subtype" = ball_colors)),
+                                    col = col_fun,
+                                    column_split = group,
+                                    column_gap = unit(0.5, "mm"),
+                                    show_column_names = FALSE,
+                                    show_row_names = FALSE,
+                                    show_row_dend = FALSE,
+                                    show_column_dend = FALSE,
+                                    row_title = NULL,
+                                    name="expression")
 
 pdf(paste(format(Sys.time(), "%Y%m%d"),"_BALL_subgoups_markers_heatmap.pdf",sep=""))
-  BALL_subgoups_markers_heatmap
+h_BALL_biomarkers_scaled
 dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
 
-# Figure S9 - Panel B -----------------------------------------------------------------
+
+# Figure S9 - Panel E -----------------------------------------------------------------
 # B-cell signature upset plot
 # Upset plot showing the overlap between the gene expression profile of each B-cell subpopulation.
 
@@ -1049,16 +1241,9 @@ library(dplyr)
 # >>> Input data
 # Human B-ALL subtype biomarkers
 ball_biomarkers <- readRDS(paste0(data_wd,"/osfstorage-archive/05_B-ALL/ALL_subgroup_biomarkers.rds"))
+#ball_biomarkers <- readRDS("ALL_subgroup_biomarkers.rds")
+str(ball_biomarkers)
 
-names(ball_biomarkers) <- recode(names(ball_biomarkers), 
-                                   G1="MEF2D fusions",
-                                   G2="TCF3-PBX1",
-                                   G3="ETV6-RUNX1/like",
-                                   G4="DUX4 fusions",
-                                   G5="ZNF384 fusions",
-                                   G6="BCR-ABL1/ph-like",
-                                   G7="Hyperdiploidy",
-                                   G8="KTM2A fusions")
 # >>> Plotting
 #UpSet plot
 m1 = make_comb_mat(ball_biomarkers)
@@ -1073,57 +1258,86 @@ BALL_subgoups_markers_upsetplot <- UpSet(m1,comb_order = order(comb_size(m1), de
                                                        "KTM2A fusions"),
                                          pt_size = unit(2,"mm"))
 
-pdf(paste0(format(Sys.time(), "%Y%m%d"),"_upset_ball_biomarkers.pdf"))
-  print(BALL_subgoups_markers_upsetplot)
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_upset_ball_biomarkers.pdf"), height = 5)
+print(BALL_subgoups_markers_upsetplot)
 dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
+# Figure S9 - Panel F-H -----------------------------------------------------------------
+# >>> Exploratory analysis Rainer dataset
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Rainer))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], 
+                           ALL_subgroup=ball_metadata_Rainer$mutation, 
+                           timepoint=ball_metadata_Rainer$timepoint, 
+                           patient=ball_metadata_Rainer$"source_name_ch1")
+
+# Plotting
+# Plot colors
+ball_colors <- jdb_palette("corona", length(levels(ball_metadata_Li$mutation)))
+names(ball_colors) <- levels(ball_metadata_Li$mutation)
+
+timepoint_color <- c("0"="#7B68EE","6/8"="#FF8C00","24"="#C71585")
 
 
-### TABLES ###
+# Plot
+p_subgroup <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = ALL_subgroup)) +
+  geom_point(size=3) +
+  scale_color_manual(values=ball_colors) +
+  labs(title="B-ALL Rainer dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
 
-# Figure S9 - Panel C -----------------------------------------------------------------
-# B-cell signature upset plot
-# Upset plot showing the overlap between the gene expression profile of each B-cell subpopulation.
+p_timepoint <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = timepoint)) +
+  geom_point(size=3) +
+  scale_color_manual(values=timepoint_color) +
+  labs(title="B-ALL Rainer dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
 
-# >>> Required packages
-library(dplyr)
-library(igraph)
+p_patient <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = patient)) +
+  geom_point(size=3) +
+  labs(title="B-ALL Rainer dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
 
-# >>> Required auxiliar functions
-source("auxiliar_functions.R")
-
-# >>> Input data
-# Human B-ALL subtype biomarkers
-ball_biomarkers <- readRDS(paste0(data_wd,"/osfstorage-archive/05_B-ALL/ALL_subgroup_biomarkers.rds"))
-names(ball_biomarkers) <- recode(names(ball_biomarkers), 
-                                 G1="MEF2D fusions",
-                                 G2="TCF3-PBX1",
-                                 G3="ETV6-RUNX1/like",
-                                 G4="DUX4 fusions",
-                                 G5="ZNF384 fusions",
-                                 G6="BCR-ABL1/ph-like",
-                                 G7="Hyperdiploidy",
-                                 G8="KTM2A fusions")
-# GRN data
-bcell_csGRN <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/bcell_grn_by_cell_type.rds"))
-
-# >>> Computing & Plotting
-bcell_csGRN_nodes <- lapply(bcell_csGRN, FUN=function(x){V(x)$name})
-
-#For each mutation, is there an enrichment of a cell types signatures?
-a0 <- ORA(list_query = ball_biomarkers, list_terms = bcell_csGRN_nodes, 
-          x_lab="Leukemia subtype", y_lab="B-cell csGRNs")
-
-pdf(paste0(format(Sys.time(), "%Y%m%d"),"_ORA_ALL_subtypes_csGRN.pdf"), width = 6)
-  a0[[2]]
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Rainer.pdf",sep=""), width=6, height = 6)
+print(p_subgroup)
+print(p_subgroup+theme(legend.position = "none"))
+print(p_timepoint)
+print(p_timepoint+theme(legend.position = "none"))
+print(p_patient)
+print(p_patient+theme(legend.position = "none"))
 dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
+# Figure S9 - Panel I -----------------------------------------------------------------
+# >>> Exploratory analysis Rainer dataset
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Iacobucci))
+pca_output_summary <- summary(pca_output)
 
-### TABLES ###
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], 
+                           ALL_subgroup=ball_metadata_Iacobucci$mutation)
+
+# Plotting
+# Plot colors
+ball_colors <- c("BCR-ABL1/ph-like"="#8c564b","Others"="#ADD8E6")
+
+# Plot
+p_subgroup <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = ALL_subgroup)) +
+  geom_point(size=3) +
+  scale_color_manual(values=ball_colors) +
+  labs(title="B-ALL Iacobucci dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Iacobucci.pdf",sep=""), width=6, height = 6)
+print(p_subgroup)
+print(p_subgroup+theme(legend.position = "none"))
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
 
 # Figure S10 - Panel A ----------------------------------------------------------------
 # Heatmap representation of Pearson correlation matrices (rho) between samples based on RNA-seq data, 
@@ -1264,10 +1478,6 @@ pdf(paste0(format(Sys.time(), "%Y%m%d"),"_rna_atac_correlation_heatmaps.pdf"))
 dev.off()
 # ------------------------------------------------------------------------------------ #
 
-
-
-
-### TABLES ###
 
 
 # Figure S10 - Panel B ----------------------------------------------------------------
@@ -1511,6 +1721,517 @@ deg <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/differential_
 
 # ------------------------------------------------------------------------------------ #
 
+
+# Figure S12 ---------------------------------------------------------------------
+
+# B-ALL Public datasets analysis -------------------------------------------------
+###-----------------------------------------------------------------------------------###
+# ****** Zinngrebe dataset (GSE140556) ****** #
+###  Zinngrebe dataset ----------
+# Biomarker Profile for Prediction of Response to SMAC Mimetic Monotherapy in Pediatric Precursor B-Cell Acute Lymphoblastic Leukemia
+# Second mitochondria-derived activator of caspase (SMAC) mimetics (SMs) targeting inhibitor of apoptosis proteins (IAPs) activate cell death pathways.
+# Microarray data from 8 SM-sensitive and 6 SM-insensitive BCP-ALL samples.
+
+library(Biobase)
+library(GEOquery)
+
+# >>> Input data
+# B-ALL Gene Expression data
+# Get the data from GEO database
+gse <- getGEO("GSE140556", GSEMatrix = TRUE)
+show(gse)
+gse <- gse[[1]]
+
+ball_norm_rna_Zinngrebe <- exprs(gse)
+ball_metadata_Zinngrebe <- pData(gse)
+
+# Translate probe ID to gene names:
+## Exclude genes with multiple annotations
+gene_name_Zinngrebe <- fData(gse)[,"Gene Symbol"]
+to_exclude <- grep("/",gene_name_Zinngrebe)
+length(to_exclude)
+ball_norm_rna_Zinngrebe <- ball_norm_rna_Zinngrebe[-to_exclude,]
+rownames(ball_norm_rna_Zinngrebe) <- gene_name_Zinngrebe[-to_exclude]
+
+
+# >>> Exploratory analysis
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Zinngrebe))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], 
+                           Response=ball_metadata_Zinngrebe$"sm response:ch1")
+
+# Plotting
+# Plot colors
+response_color <- c("SM-insensitive"="#bebada","SM-sensitive"="#fb8072")
+
+# Plot
+p_response <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = Response)) +
+  geom_point(size=3) +
+  scale_color_manual(values=response_color) +
+  labs(title="B-ALL Zinngrebe dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Zinngrebe.pdf",sep=""), width=6, height = 6)
+print(p_response)
+print(p_response+theme(legend.position = "none"))
+dev.off()
+
+
+# >>> Computing GSVA
+# GRN data
+tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/tf_ocr_gene_interactions_curated.txt"),
+                          sep="\t",
+                          dec=",",
+                          header=TRUE)
+
+### GSVA
+# Get the TF regulons gene sets for the positively regulated genes.
+df_regulons_pos <- unique(tf_ocr_gene[tf_ocr_gene$likelihood=="activator",c("tf_symbol","gene_symbol")])
+
+df_regulons_list_pos <- list()
+for(i in unique(df_regulons_pos$tf_symbol)){
+  df_regulons_list_pos[[i]] <- df_regulons_pos$gene_symbol[df_regulons_pos$tf_symbol==i]
+}
+
+gs_symbol <- df_regulons_list_pos
+gsvaPar <- gsvaParam(ball_norm_rna_Zinngrebe, gs_symbol, kcdf="Gaussian")
+gsva.BALL_Zinngrebe <- gsva(gsvaPar, verbose=FALSE)
+
+
+# >>> Save results
+save(ball_norm_rna_Zinngrebe,ball_metadata_Zinngrebe,gsva.BALL_Zinngrebe,file="BALL_Zinngrebe.RData")
+###-----------------------------------------------------------------------------------###
+
+
+###-----------------------------------------------------------------------------------###
+# ****** Singh dataset (GSE153670) ****** #
+###  Singh dataset ----------
+# Analyzed sequencing data from bone marrow samples taken from patients enrolled on ENSIGN or ELIANA clinical trials prior to infusion of CART19.
+
+library(Biobase)
+library(GEOquery)
+
+# >>> Input data
+# B-ALL Gene Expression data
+# Get the data from GEO database
+gse <- getGEO("GSE153670", GSEMatrix = TRUE)
+show(gse)
+gse <- gse[[1]]
+#getGEOSuppFiles("GSE153670")
+ball_rna_Singh <- read.csv("GSE153670/GSE153670_Tisagenlecleucel_patient_RNAseq_Count_matrix.csv", sep=";", check.names = FALSE, row.names = 1)
+ball_metadata_Singh <- pData(gse)
+
+
+# >>>  Data normalization
+require(edgeR)
+# Create DEGlist object with count data and defining the grouping of the variables
+dge <- DGEList(counts=ball_rna_Singh, group=ball_metadata_Singh$"patient response:ch1")
+
+# Filter out low expressed genes
+filtering_criteria_edgeR <- filterByExpr(dge, group = ball_metadata_Singh$"patient response:ch1",  min.count = 5, min.total.count = 10)
+dge.filt <- dge[filtering_criteria_edgeR,]
+dim(dge.filt)
+
+# Define the model matrix
+dge.filt <- calcNormFactors(dge.filt) # computes the correction factor based on TMM (default method)
+group <- as.factor(ball_metadata_Singh$"patient response:ch1")
+design <- model.matrix( ~ 0 + group)
+colnames(design) <- gsub("group","", colnames(design))
+
+# Voom transformation including log2 CPM normalization
+v <- voom(dge.filt, design = design, plot = TRUE)
+ball_norm_rna_Singh <- v$E
+
+# >>> Exploratory analysis
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Singh))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], 
+                           Response=ball_metadata_Singh$"patient response:ch1")
+
+# Plotting
+# Plot colors
+response_color <- c("NR"="#bebada","CR"="#fb8072")
+
+
+# Plot
+p_response <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = Response)) +
+  geom_point(size=3) +
+  scale_color_manual(values=response_color) +
+  labs(title="B-ALL Singh multi-dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),")%"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),")%")) +
+  theme_classic()
+
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Singh.pdf",sep=""), width=6, height = 6)
+print(p_response)
+print(p_response+theme(legend.position = "none"))
+dev.off()
+
+
+# >>> Computing GSVA
+# GRN data
+tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/tf_ocr_gene_interactions_curated.txt"),
+                          sep="\t",
+                          dec=",",
+                          header=TRUE)
+
+### GSVA
+# Get the TF regulons gene sets for the positively regulated genes.
+df_regulons_pos <- unique(tf_ocr_gene[tf_ocr_gene$likelihood=="activator",c("tf_symbol","gene_symbol")])
+
+df_regulons_list_pos <- list()
+for(i in unique(df_regulons_pos$tf_symbol)){
+  df_regulons_list_pos[[i]] <- df_regulons_pos$gene_symbol[df_regulons_pos$tf_symbol==i]
+}
+
+gs_symbol <- df_regulons_list_pos
+gsvaPar <- gsvaParam(ball_norm_rna_Singh, gs_symbol, kcdf="Gaussian")
+gsva.BALL_Singh <- gsva(gsvaPar, verbose=FALSE)
+
+
+# >>> Save results
+save(ball_norm_rna_Singh,ball_metadata_Singh,gsva.BALL_Singh,file="BALL_Singh.RData")
+###-----------------------------------------------------------------------------------###
+
+
+# Figure S12 - Panel A,B ----------------------------------------------------------------
+###-----------------------------------------------------------------------------------###
+# ****** Singh dataset (GSE153670) ****** #
+###  Singh dataset ----------
+# Bulk RNA sequencing from patient bone marrow samples
+
+library(Biobase)
+library(GEOquery)
+
+# >>> Input data
+# B-ALL Gene Expression data
+# B-ALL Singh Gene Expression data
+load("BALL_Singh.RData", verbose = TRUE)
+
+# >>> Exploratory analysis
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Singh))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], Response=ball_metadata_Singh$"patient response:ch1")
+
+# Plotting
+# Plot colors
+response_color <- c("NR"="#bebada","CR"="#fb8072")
+
+
+# Plot
+p_response <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = Response)) +
+  geom_point(size=3) +
+  scale_color_manual(values=response_color) +
+  labs(title="B-ALL Singh dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),"%)"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),"%)")) +
+  theme_classic()
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Singh.pdf",sep=""), width=6, height = 6)
+  print(p_response)
+  print(p_response+theme(legend.position = "none"))
+dev.off()
+
+
+# >>> Computing GSVA
+# GRN data
+tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/tf_ocr_gene_interactions_curated.txt"),
+                          sep="\t",
+                          dec=",",
+                          header=TRUE)
+
+### GSVA
+# Get the TF regulons gene sets for the positively regulated genes.
+df_regulons_pos <- unique(tf_ocr_gene[tf_ocr_gene$likelihood=="activator",c("tf_symbol","gene_symbol")])
+
+df_regulons_list_pos <- list()
+for(i in unique(df_regulons_pos$tf_symbol)){
+  df_regulons_list_pos[[i]] <- df_regulons_pos$gene_symbol[df_regulons_pos$tf_symbol==i]
+}
+
+gs_symbol <- df_regulons_list_pos
+gsvaPar <- gsvaParam(ball_norm_rna_Singh, gs_symbol, kcdf="Gaussian")
+gsva.BALL_Singh <- gsva(gsvaPar, verbose=FALSE)
+
+
+# >>> Save results
+save(ball_norm_rna_Singh,ball_metadata_Singh,gsva.BALL_Singh,file="BALL_Singh.RData")
+
+
+# >>> Heatmap plot
+# Plot  
+# Get the regulons classification
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
+names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
+# Plot colors
+cols <- jdb_palette("brewer_spectra")
+col_fun <- colorRamp2(seq(-2, 2, length.out = length(cols)), cols)
+regulons_color <- c("1"="#92c5de","2"="#2166ac","3"="#91cf60","4"="#dd1c77","5"="black")
+response_color <- c("NR"="#bebada","CR"="#fb8072")
+
+# Heatmap
+set.seed(123)
+h_scaled_BALL_Singh <- Heatmap(t(scale(t(gsva.BALL_Singh))),
+                                   top_annotation = HeatmapAnnotation("Response" = ball_metadata_Singh$`patient response:ch1`,
+                                                                      col=list("Response"= response_color)),
+                                   left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[rownames(gsva.BALL_Singh)],
+                                                                   col=list("TF_subgroup" = regulons_color)),
+                                   col = col_fun,
+                                   column_km = 2,
+                                   row_split = factor(regulons_group_plot[rownames(gsva.BALL_Singh)],levels=c("1","2","3","4","5")),
+                                   column_gap = unit(0.5, "mm"),
+                                   row_gap = unit(0.5, "mm"),
+                                   show_column_names = FALSE,
+                                   show_row_names = FALSE,
+                                   row_title = NULL,
+                                   column_title = NULL,
+                                   row_names_gp = gpar(fontsize = 6),
+                                   name="GSVA score (scaled)"
+)
+
+## Get the sample clusterng
+column_clusters <- column_order(h_scaled_BALL_Singh)
+cluster_assignments <- rep(NA, ncol(gsva.BALL_Singh))
+names(cluster_assignments) <- colnames(gsva.BALL_Singh)
+
+for (i in seq_along(column_clusters)) {
+  cluster_assignments[column_clusters[[i]]] <- i
+}
+
+head(cluster_assignments)
+
+
+h_scaled_BALL_Singh_clust <- Heatmap(t(scale(t(gsva.BALL_Singh))),
+                               top_annotation = HeatmapAnnotation("km.Clustering" = cluster_assignments,"Response" = ball_metadata_Singh$`patient response:ch1`,
+                                                                  col=list("Response"= response_color,
+                                                                           "km.Clustering" = c("1"="#DAA520","2"="#2F4F4F"))),
+                               left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[rownames(gsva.BALL_Singh)],
+                                                               col=list("TF_subgroup" = regulons_color)),
+                               col = col_fun,
+                               column_km = 2,
+                               row_split = factor(regulons_group_plot[rownames(gsva.BALL_Singh)],levels=c("1","2","3","4","5")),
+                               column_gap = unit(0.5, "mm"),
+                               row_gap = unit(0.5, "mm"),
+                               show_column_names = FALSE,
+                               show_row_names = FALSE,
+                               row_title = NULL,
+                               column_title = NULL,
+                               row_names_gp = gpar(fontsize = 6),
+                               name="GSVA score (scaled)"
+)
+
+
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_heatmap_GSVA_regulons_BALL_Singh.pdf"), width = 8, heigh=5)
+  h_scaled_BALL_Singh_clust
+dev.off()
+
+## Differential expression at regulon level
+library(sva)
+library(limma)
+
+group <- ball_metadata_Singh$`patient response:ch1`
+## build design matrix of the model to which we fit the data
+mod <- model.matrix(~ group, as.data.frame(colnames(gsva.BALL_Singh)))
+## build design matrix of the corresponding null model
+mod0 <- model.matrix(~ 1, as.data.frame(colnames(gsva.BALL_Singh)))
+## estimate surrogate variables (SVs) with SVA
+sv <- sva(gsva.BALL_Singh, mod, mod0)
+## add SVs to the design matrix of the model of interest
+mod <- cbind(mod, sv$sv)
+## fit linear models
+fit <- lmFit(gsva.BALL_Singh, mod)
+## calculate moderated t-statistics using the robust regime
+fit.eb <- eBayes(fit, robust=TRUE)
+## summarize the extent of differential expression at 5% FDR
+res <- decideTests(fit.eb)
+summary(res)
+tt <- topTable(fit.eb, coef=2, n=Inf)
+
+DEpwys <- rownames(tt)[tt$P.Val <= 0.05]
+length(DEpwys)
+h_scaled_BALL_Singh_DEGs <- Heatmap(t(scale(t(gsva.BALL_Singh[DEpwys,]))),
+                                        top_annotation = HeatmapAnnotation("Response" = ball_metadata_Singh$`patient response:ch1`,
+                                                                           col=list("Response"= response_color)),
+                                        left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[DEpwys],
+                                                                        col=list("TF_subgroup" = regulons_color)),
+                                        col = col_fun,
+                                        column_km = 2,
+                                        row_split = factor(regulons_group_plot[DEpwys],levels=c("1","2","3","4","5")),
+                                        column_gap = unit(0.5, "mm"),
+                                        row_gap = unit(0.5, "mm"),
+                                        show_column_names = FALSE,
+                                        show_row_names = TRUE,
+                                        row_title = NULL,
+                                        column_title = NULL,
+                                        row_names_gp = gpar(fontsize = 8),
+                                        name="GSVA score (scaled)"
+)
+
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_heatmap_GSVA_regulons_BALL_Singh_sig.pdf"), width = 8, heigh=6)
+h_scaled_BALL_Singh_DEGs
+dev.off()
+###-----------------------------------------------------------------------------------###
+
+
+
+# Figure S12 - Panel C,D ----------------------------------------------------------------
+###-----------------------------------------------------------------------------------###
+# ****** Zinngrebe dataset (GSE140556) ****** #
+###  Zinngrebe dataset ----------
+# microarray data from 8 SM-sensitive and 6 SM-insensitive BCP-ALL samples
+
+# >>> Input data
+# B-ALL Zinngrebe Gene Expression data
+load("BALL_Zinngrebe.RData", verbose = TRUE)
+
+# >>> Ploting
+# Plot colors
+response_color <- c("SM-insensitive"="#bebada","SM-sensitive"="#fb8072")
+
+# Plot 
+### Exploratory analysis: PCA
+
+# >>> Exploratory analysis
+# Principal component analysis
+pca_output <- prcomp(t(ball_norm_rna_Zinngrebe))
+pca_output_summary <- summary(pca_output)
+
+data_to_plot <- data.frame(PC1=pca_output$x[,1],PC2=pca_output$x[,2], Response=ball_metadata_Zinngrebe$`sm response:ch1`)
+
+# Plot
+p_response <- ggplot(data_to_plot, aes(x = PC1, y = PC2, color = Response)) +
+  geom_point(size=3) +
+  scale_color_manual(values=response_color) +
+  labs(title="B-ALL Zinngrebe dataset", x = paste0("PC1 (",round(pca_output_summary$importance[2,1]*100,1),"%)"), y = paste0("PC2 (",round(pca_output_summary$importance[2,2]*100,1),"%)")) +
+  theme_classic()
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_pca_BALL_Zinngrebe.pdf",sep=""), width=6, height = 6)
+  print(p_response)
+  print(p_response+theme(legend.position = "none"))
+dev.off()
+
+
+# >>> Heatmap GSVA
+# Plot  
+# Get the regulons classification
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
+names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
+# Plot colors
+cols <- jdb_palette("brewer_spectra")
+col_fun <- colorRamp2(seq(-2, 2, length.out = length(cols)), cols)
+regulons_color <- c("1"="#92c5de","2"="#2166ac","3"="#91cf60","4"="#dd1c77","5"="black")
+response_color <- c("SM-insensitive"="#bebada","SM-sensitive"="#fb8072")
+
+# Heatmap
+set.seed(123)
+h_scaled_BALL_Zinngrebe <- Heatmap(t(scale(t(gsva.BALL_Zinngrebe))),
+                               top_annotation = HeatmapAnnotation("Response" = ball_metadata_Zinngrebe$`sm response:ch1`,
+                                                                  col=list("Response"= response_color)),
+                               left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[rownames(gsva.BALL_Zinngrebe)],
+                                                               col=list("TF_subgroup" = regulons_color)),
+                               col = col_fun,
+                               column_km = 2,
+                               row_split = factor(regulons_group_plot[rownames(gsva.BALL_Zinngrebe)],levels=c("1","2","3","4","5")),
+                               column_gap = unit(0.5, "mm"),
+                               row_gap = unit(0.5, "mm"),
+                               show_column_names = FALSE,
+                               show_row_names = FALSE,
+                               row_title = NULL,
+                               column_title = NULL,
+                               row_names_gp = gpar(fontsize = 6),
+                               name="GSVA score (scaled)"
+)
+
+
+## Get the sample clusterng
+column_clusters <- column_order(h_scaled_BALL_Zinngrebe)
+cluster_assignments <- rep(NA, ncol(gsva.BALL_Zinngrebe))
+names(cluster_assignments) <- colnames(gsva.BALL_Zinngrebe)
+
+for (i in seq_along(column_clusters)) {
+  cluster_assignments[column_clusters[[i]]] <- i
+}
+
+head(cluster_assignments)
+
+
+h_scaled_BALL_Zinngrebe_clust <- Heatmap(t(scale(t(gsva.BALL_Zinngrebe))),
+                                     top_annotation = HeatmapAnnotation("km.Clustering" = cluster_assignments,"Response" = ball_metadata_Zinngrebe$`sm response:ch1`,
+                                                                        col=list("Response"= response_color,
+                                                                                 "km.Clustering" = c("1"="#DAA520","2"="#2F4F4F"))),
+                                     left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[rownames(gsva.BALL_Zinngrebe)],
+                                                                     col=list("TF_subgroup" = regulons_color)),
+                                     col = col_fun,
+                                     column_km = 2,
+                                     row_split = factor(regulons_group_plot[rownames(gsva.BALL_Zinngrebe)],levels=c("1","2","3","4","5")),
+                                     column_gap = unit(0.5, "mm"),
+                                     row_gap = unit(0.5, "mm"),
+                                     show_column_names = FALSE,
+                                     show_row_names = FALSE,
+                                     row_title = NULL,
+                                     column_title = NULL,
+                                     row_names_gp = gpar(fontsize = 6),
+                                     name="GSVA score (scaled)"
+)
+
+
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_heatmap_GSVA_regulons_BALL_Zinngrebe.pdf"), width = 8, heigh=5)
+h_scaled_BALL_Zinngrebe_clust
+dev.off()
+
+
+## Differential expression at regulon level
+library(sva)
+library(limma)
+
+group <- ball_metadata_Zinngrebe$`sm response:ch1`
+## build design matrix of the model to which we fit the data
+mod <- model.matrix(~ group, as.data.frame(colnames(gsva.BALL_Zinngrebe)))
+## build design matrix of the corresponding null model
+mod0 <- model.matrix(~ 1, as.data.frame(colnames(gsva.BALL_Zinngrebe)))
+## estimate surrogate variables (SVs) with SVA
+sv <- sva(gsva.BALL_Zinngrebe, mod, mod0)
+## add SVs to the design matrix of the model of interest
+mod <- cbind(mod, sv$sv)
+## fit linear models
+fit <- lmFit(gsva.BALL_Zinngrebe, mod)
+## calculate moderated t-statistics using the robust regime
+fit.eb <- eBayes(fit, robust=TRUE)
+## summarize the extent of differential expression at 5% FDR
+res <- decideTests(fit.eb)
+summary(res)
+tt <- topTable(fit.eb, coef=2, n=Inf)
+
+DEpwys <- rownames(tt)[tt$P.Val <= 0.05]
+length(DEpwys)
+h_scaled_BALL_Zinngrebe_DEGs <- Heatmap(t(scale(t(gsva.BALL_Zinngrebe[DEpwys,]))),
+                                   top_annotation = HeatmapAnnotation("Response" = ball_metadata_Zinngrebe$`sm response:ch1`,
+                                                                      col=list("Response"= response_color)),
+                                   left_annotation = rowAnnotation("TF_subgroup" = regulons_group_plot[DEpwys],
+                                                                   col=list("TF_subgroup" = regulons_color)),
+                                   col = col_fun,
+                                   column_km = 2,
+                                   row_split = factor(regulons_group_plot[DEpwys],levels=c("1","2","3","4","5")),
+                                   column_gap = unit(0.5, "mm"),
+                                   row_gap = unit(0.5, "mm"),
+                                   show_column_names = FALSE,
+                                   show_row_names = TRUE,
+                                   row_title = NULL,
+                                   column_title = NULL,
+                                   row_names_gp = gpar(fontsize = 8),
+                                   name="GSVA score (scaled)"
+)
+
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_heatmap_GSVA_regulons_BALL_Zinngrebe_sig.pdf"), width = 8, heigh=4)
+  h_scaled_BALL_Zinngrebe_DEGs
+dev.off()
+###-----------------------------------------------------------------------------------###
 
 
 # Table S6 -----------------------------------------------------------------
