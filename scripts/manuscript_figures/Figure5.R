@@ -1,6 +1,5 @@
 #***************************************************
-## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its 
-## implications in the pathogenesis of B-cell acute lymphoblastic leukemia"
+## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its implications in the pathogenesis of B-ALL"
 ## Authors: Planell N et al.
 ## Date: 2025
 ## Code: Figure 5
@@ -409,7 +408,7 @@ age_color <- c("Paediatric"="#DAA520","Adult"="#2F4F4F")
 # Get the regulons classification
 bcell_biomarkers <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/differential_expression_analysis/bcell_biomarkers.rds"))
 
-regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
 regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
 names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
 
@@ -569,14 +568,6 @@ dev.off()
 
 
 
-
-
-
-
-
-
-
-
 # Figure 5 - Panel E -----------------------------------------------------------------
 # ORA of B-ALL subtypes signatures over the TF regulons defined by bulk approach (n=169).
 
@@ -621,7 +612,7 @@ for(i in regulons){
   list_regulons[[i]] <- unique(tf_ocr_gene[tf_ocr_gene$tf_symbol==i,"gene_ensembl"])
 }
 
-regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
 regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
 names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
 

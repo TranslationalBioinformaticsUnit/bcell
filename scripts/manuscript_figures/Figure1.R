@@ -1,8 +1,7 @@
 #***************************************************
-## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its 
-## implications in the pathogenesis of B-cell acute lymphoblastic leukemia"
+## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its implications in the pathogenesis of B-ALL"
 ## Authors: Planell N et al.
-## Date: 2024
+## Date: 2025
 ## Code: Figure 1
 ## Input data available at: https://osf.io/gswpy/?view_only=39cfd50d5a7e44e5a2d141869dcb1315
 #***************************************************

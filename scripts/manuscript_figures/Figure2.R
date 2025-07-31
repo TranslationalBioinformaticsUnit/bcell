@@ -1,8 +1,7 @@
 #***************************************************
-## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its 
-## implications in the pathogenesis of B-cell acute lymphoblastic leukemia"
+## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its implications in the pathogenesis of B-ALL"
 ## Authors: Planell N et al.
-## Date: 2024
+## Date: 2025
 ## Code: Figure 2
 ## Input data available at: https://osf.io/gswpy/?view_only=39cfd50d5a7e44e5a2d141869dcb1315
 #***************************************************
@@ -255,7 +254,7 @@ tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory
                           dec=",",
                           header=TRUE)
 # Regulons clusters
-regulon_clusters <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulon_clusters <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
 
 
 # >>> Computing
@@ -359,25 +358,25 @@ for(i in unique(data_to_plot$tfs)){
   data_to_plot$cell_type[data_to_plot$tfs==i] <- names(group)[group==TRUE]
 }
 
-data_to_plot$cell_type <- factor(data_to_plot$cell_type, levels=c("2","1","3","4","5"))
+data_to_plot$cell_type <- factor(data_to_plot$cell_type, levels=names(regulon_clusters))
 
 data_to_plot$pathway <- factor(data_to_plot$pathway, 
                                levels=rev(target_pathways))
 
-data_to_plot$tfs <- factor(data_to_plot$tfs, levels=c(rev(regulon_clusters[["2"]]),
-                                                      rev(regulon_clusters[["1"]]),
-                                                      rev(regulon_clusters[["3"]]),
-                                                      rev(regulon_clusters[["4"]]),
-                                                      rev(regulon_clusters[["5"]])))
+data_to_plot$tfs <- factor(data_to_plot$tfs, levels=c(rev(regulon_clusters[[1]]),
+                                                      rev(regulon_clusters[[2]]),
+                                                      rev(regulon_clusters[[3]]),
+                                                      rev(regulon_clusters[[4]]),
+                                                      rev(regulon_clusters[[5]])))
 
 mat <- table(data_to_plot$tfs, data_to_plot$pathway)
 
 # Plotting colors
-grid.col <- setNames(c(rep("#00FFFF",length(rgroups_named[["2"]])),
-                       rep("#1E90FF",length(rgroups_named[["1"]])),
-                       rep("#32CD32",length(rgroups_named[["3"]])),
-                       rep("#DC143C",length(rgroups_named[["4"]])),
-                       rep("#252525",length(rgroups_named[["5"]])),
+grid.col <- setNames(c(rep("#00FFFF",length(regulon_clusters[[1]])),
+                       rep("#1E90FF",length(regulon_clusters[[2]])),
+                       rep("#32CD32",length(regulon_clusters[[3]])),
+                       rep("#DC143C",length(regulon_clusters[[4]])),
+                       rep("#252525",length(regulon_clusters[[5]])),
                        rep("#fa9fb5",10),rep("#756bb1",5),rep("#fec44f",9),rep("#a6bddb",13), rep("#1c9099",15)), union(rownames(mat), colnames(mat)))
 
 # Plot
@@ -446,7 +445,7 @@ tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory
 bcell_GRN <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/bcell_grn.rds"))
 bcell_csGRN <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/bcell_grn_by_cell_type.rds"))
 # Regulons clusters
-regulon_clusters <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/regulons_clusters.rds"))
+regulon_clusters <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
                         
 # >>> Computing
 

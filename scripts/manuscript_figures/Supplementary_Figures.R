@@ -1,9 +1,8 @@
 #***************************************************
-## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its 
-## implications in the pathogenesis of B-cell acute lymphoblastic leukemia"
+## Paper: "Uncovering the regulatory landscape of early human B-cell lymphopoiesis and its implications in the pathogenesis of B-ALL"
 ## Authors: Planell N et al.
-## Date: 2024
-## Code: Supplementary Figures (S3-S11) & Tables (S6, S8-S9)
+## Date: 2025
+## Code: Supplementary Figures (S3-S14) & Tables (S6, S8-S9)
 ## Input data available at: https://osf.io/gswpy/?view_only=39cfd50d5a7e44e5a2d141869dcb1315
 #***************************************************
 
@@ -1126,10 +1125,199 @@ dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
+# Figure S9 - Panel A-- -----------------------------------------------------------------
+# Correlation between TF regulon score (Fig2A) from bulk and single-cell (Fig4C,D).
+
+# >>> Required packages
+library(GSVA)
+library(ComplexHeatmap)
+library(BuenColors)
+library(ggplot2)
+library(reshape2)
+library(circlize)
+library(ggrepel)
+
+# >>> Input data
+# Gene Expression data
+rna <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_norm_data.rds"))
+rna_metadata <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_metadata.rds"))
+
+# TF regulon targets
+df_regulons_list_pos <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulon_activated_gene_set_ensembl.rds"))
+
+## AUCell single-cell B-cell differentiation
+scpublic_bcell <- readRDS("C:/Users/nplanellpic/Documents/npp/project/ongoing/bcell/submissions/20250127_Scadvance_submission/20250723_revision_2ndRound/regulon_score_comparison/20250724_scPublic_metadata.rds")
+dim(scpublic_bcell)
+
+scinhouse_bcell <- readRDS("C:/Users/nplanellpic/Documents/npp/project/ongoing/bcell/submissions/20250127_Scadvance_submission/20250723_revision_2ndRound/regulon_score_comparison/20250724_scInHouse_metadata.rds")
+dim(scinhouse_bcell)
+
+# Regulons groups
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
+regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
+names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
+
+# >>> Computing
+gs_ensembl <- df_regulons_list_pos
+gsvaPar <- gsvaParam(rna, gs_ensembl, kcdf="Gaussian")
+gsva.Bcell <- gsva(gsvaPar, verbose=FALSE)
+
+
+## Get the mean activity per cell type:
+mean_TFactivity_bulk <- t(apply(gsva.Bcell,1,FUN=function(x){return(as.numeric(by(x,rna_metadata$CellType,mean)))}))
+colnames(mean_TFactivity_bulk) <- levels(rna_metadata$CellType)
+head(mean_TFactivity_bulk)
+
+mean_TFactivity_scpublic_bcell <- t(apply(scpublic_bcell[,grep("^AUCell_",names(scpublic_bcell))],2,FUN=function(x){return(as.numeric(by(x,scpublic_bcell$cell_annotation,mean)))}))
+colnames(mean_TFactivity_scpublic_bcell) <- levels(scpublic_bcell$cell_annotation)
+rownames(mean_TFactivity_scpublic_bcell) <- gsub("^AUCell_","",rownames(mean_TFactivity_scpublic_bcell))
+head(mean_TFactivity_scpublic_bcell)
+
+mean_TFactivity_scinhouse_bcell <- t(apply(scinhouse_bcell[,grep("^AUCell_",names(scinhouse_bcell))],2,FUN=function(x){return(as.numeric(by(x,scinhouse_bcell$cell_type_reannotation,mean)))}))
+colnames(mean_TFactivity_scinhouse_bcell) <- levels(scinhouse_bcell$cell_type_reannotation)
+rownames(mean_TFactivity_scinhouse_bcell) <- gsub("^AUCell_","",rownames(mean_TFactivity_scinhouse_bcell))
+head(mean_TFactivity_scinhouse_bcell)
+
+
+## Compute the Spearman correlation and save the p-value and the rho
+
+# Bulk vs scPublic ----------------------------
+table(rownames(mean_TFactivity_bulk)==rownames(mean_TFactivity_scpublic_bcell))
+
+TFregulon_bulk_scPublic_correlation <- matrix(nrow=nrow(mean_TFactivity_bulk),ncol=3, 
+                                              dimnames = list(rownames(mean_TFactivity_bulk), c("rho","Pvalue","log10P")))
+
+for(i in rownames(mean_TFactivity_bulk)){
+  res <- cor.test(mean_TFactivity_bulk[i,c("HSC","CLP","proB","preB","ImmatureB","Transitional_B")],mean_TFactivity_scpublic_bcell[i,c("HSC/MPP","CLP","Pro-B","Pre-B","Immature-B","Mature-B")], method="spearman")
+  TFregulon_bulk_scPublic_correlation[i,"rho"] <- res$estimate
+  TFregulon_bulk_scPublic_correlation[i,"Pvalue"] <-   res$p.value
+  TFregulon_bulk_scPublic_correlation[i,"log10P"] <- -log10(res$p.value)
+}
+
+## Plotting
+# Plot colors
+bcell_colors <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/bcell_colors.rds"))
+
+# Summary correlation plot (Panel A; left)
+data_to_plot <- as.data.frame(TFregulon_bulk_scPublic_correlation)
+
+regulons_color <- c("1"="#92c5de","2"="#2166ac","3"="#91cf60","4"="#dd1c77","5"="black")
+data_to_plot$regulon_group <- regulons_group_plot[rownames(TFregulon_bulk_scPublic_correlation)]
+data_to_plot$TF <- rownames(data_to_plot)
+
+p1 <- ggplot(data_to_plot,aes(rho,log10P, color=regulon_group)) +
+  geom_point(position = "jitter") +
+  scale_color_manual(values = regulons_color) +
+  geom_hline(yintercept = 1.3, linetype = "dashed", color = "black") +
+  theme_bw() +
+  geom_text_repel(
+    data = subset(data_to_plot, Pvalue > 0.05), 
+    aes(label = TF),
+    box.padding = 0.5, point.padding = 0.5, segment.color = 'grey50',
+    size = 3) +
+  geom_text_repel(
+    data = subset(data_to_plot, TF %in% c("IRX2","ELK3","MECOM","ZSCAN31","MEIS1","EBF1","PAX5","CEBPB")), 
+    aes(label = TF),
+    box.padding = 0.5, point.padding = 0.5, segment.color = 'grey50',
+    size = 3) +
+  ggtitle("Spearman correlation of TF-regulon score:\n B-cell (bulk) vs Public - phs002371.v7.2 (single-cell)")
+
+ggsave(filename=paste0(format(Sys.time(), "%Y%m%d"),"_corrplot_bulk_scPublic.pdf"),plot=p1, width = 6, height = 5)
+
+# Representative correlation plots (Panel B)
+target_TFs <- c("IRX2","ELK3","MECOM","ZSCAN31","MEIS1","EBF1","PAX5","CEBPB","VDR","ARID5A","OTX1","AIRE","MLXIP","NR2F6","MXI1")
+data_to_plot <- melt(mean_TFactivity_bulk[target_TFs,c("HSC","CLP","proB","preB","ImmatureB","Transitional_B")])
+names(data_to_plot)[3] <- "bulk"
+aa <- melt(mean_TFactivity_scpublic_bcell[target_TFs,c("HSC/MPP","CLP","Pro-B","Pre-B","Immature-B","Mature-B")])
+table(data_to_plot$Var1==aa$Var1)
+data_to_plot$sc <- aa$value
+
+pp1 <- ggplot(data_to_plot, aes(bulk,sc)) +
+  geom_line() +
+  geom_point(aes(color=Var2), size=3) +
+  facet_wrap(~Var1, scales = "free") +
+  theme_bw() +
+  ylab("Public dataset (AUCell)") +
+  xlab("B cell (bulk - GSVA)") +
+  labs(color = "Cell type") +
+  scale_color_manual(values=bcell_colors) +
+  ggtitle("TF-regulon score:\n B-cell (bulk) vs Public - phs002371.v7.2 (single-cell)")
+
+
+ggsave(filename=paste0(format(Sys.time(), "%Y%m%d"),"_scatterplot_bulk_scPublic.pdf"),plot=pp1, width=8)
+
+
+# Bulk vs scInHouse ----------------------------
+table(rownames(mean_TFactivity_bulk)==rownames(mean_TFactivity_scinhouse_bcell))
+
+TFregulon_bulk_scinhouse_bcell_correlation <- matrix(nrow=nrow(mean_TFactivity_bulk),ncol=3, 
+                                                     dimnames = list(rownames(mean_TFactivity_bulk), c("rho","Pvalue","log10P")))
+
+for(i in rownames(mean_TFactivity_bulk)){
+  res <- cor.test(mean_TFactivity_bulk[i,c("HSC","CLP","proB","preB")],mean_TFactivity_scinhouse_bcell[i,c("HSC/MPP","CLP/Pre-pro-B","pro-B","pre-B")], method="spearman")
+  TFregulon_bulk_scinhouse_bcell_correlation[i,"rho"] <- res$estimate
+  TFregulon_bulk_scinhouse_bcell_correlation[i,"Pvalue"] <-   res$p.value
+  TFregulon_bulk_scinhouse_bcell_correlation[i,"log10P"] <- -log10(res$p.value)
+}
+
+## Plotting
+# Summary correlation plot (Panel A; right)
+data_to_plot <- as.data.frame(TFregulon_bulk_scinhouse_bcell_correlation)
+data_to_plot$regulon_group <- regulons_group_plot[rownames(TFregulon_bulk_scPublic_correlation)]
+data_to_plot$TF <- rownames(data_to_plot)
+
+p2 <- ggplot(data_to_plot,aes(rho,log10P, color=regulon_group)) +
+  geom_point(position = "jitter") +
+  scale_color_manual(values = regulons_color) +
+  theme_bw() +
+  geom_text_repel(
+    data = subset(data_to_plot, Pvalue > 0.05), 
+    aes(label = TF),
+    box.padding = 0.5, point.padding = 0.5, segment.color = 'grey50',
+    size = 3) +
+  geom_text_repel(
+    data = subset(data_to_plot, TF %in% c("IRX2","ELK3","MECOM","ZSCAN31","MEIS1","EBF1","PAX5","CEBPB")), 
+    aes(label = TF),
+    box.padding = 0.5, point.padding = 0.5, segment.color = 'grey50',
+    size = 3) +
+  ggtitle("Spearman correlation of TF-regulon score:\n B-cell (bulk) vs Inhouse - CD34+ BM (single-cell)")
+
+
+ggsave(filename=paste0(format(Sys.time(), "%Y%m%d"),"_corrplot_bulk_scInhouse.pdf"),plot=p2, width = 6, height = 5)
+
+
+# Representative correlation plots (Panel C)
+target_TFs <- c("IRX2","ELK3","MECOM","ZSCAN31","MEIS1","EBF1","PAX5","CEBPB","VDR","ARID5A","OTX1","AIRE","MLXIP","NR2F6","MXI1")
+data_to_plot <- melt(mean_TFactivity_bulk[target_TFs,c("HSC","CLP","proB","preB")])
+names(data_to_plot)[3] <- "bulk"
+aa <- melt(mean_TFactivity_scinhouse_bcell[target_TFs,c("HSC/MPP","CLP/Pre-pro-B","pro-B","pre-B")])
+table(data_to_plot$Var1==aa$Var1)
+data_to_plot$sc <- aa$value
+
+pp2 <- ggplot(data_to_plot, aes(bulk,sc)) +
+  geom_line() +
+  geom_point(aes(color=Var2), size=3) +
+  facet_wrap(~Var1, scales = "free") +
+  theme_bw() +
+  ylab("Public dataset (AUCell)") +
+  xlab("B cell (bulk - GSVA)") +
+  labs(color = "Cell type") +
+  scale_color_manual(values=bcell_colors) +
+  ggtitle("TF-regulon score:\n B-cell (bulk) vs Inhouse - CD34+ BM (single-cell)")
+
+
+ggsave(filename=paste0(format(Sys.time(), "%Y%m%d"),"_scatterplot_bulk_scInhouse.pdf"),plot=pp2, width=8)
+
+# ------------------------------------------------------------------------------------ #
 
 
 
-# Figure S9 - Panel A-C -----------------------------------------------------------------
+# Figure S9 - Panel B-C -----------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------ #
+
+
+# Figure S10 - Panel A-C -----------------------------------------------------------------
 # >>> Exploratory analysis Li dataset
 # Principal component analysis
 pca_output <- prcomp(t(ball_norm_rna_Li))
@@ -1176,7 +1364,7 @@ dev.off()
 
 
 
-# Figure S9 - Panel D -----------------------------------------------------------------
+# Figure S10 - Panel D -----------------------------------------------------------------
 # B-ALL subtypes signatures
 # Heatmap representation of 5,749 genes defining the signature profile of the B-ALL subtypes. 
 # Biomarker genes for each B-ALL subtype were derived from 
@@ -1230,7 +1418,7 @@ dev.off()
 
 
 
-# Figure S9 - Panel E -----------------------------------------------------------------
+# Figure S10 - Panel E -----------------------------------------------------------------
 # B-cell signature upset plot
 # Upset plot showing the overlap between the gene expression profile of each B-cell subpopulation.
 
@@ -1264,7 +1452,7 @@ dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
-# Figure S9 - Panel F-H -----------------------------------------------------------------
+# Figure S10 - Panel F-H -----------------------------------------------------------------
 # >>> Exploratory analysis Rainer dataset
 # Principal component analysis
 pca_output <- prcomp(t(ball_norm_rna_Rainer))
@@ -1312,7 +1500,7 @@ dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
-# Figure S9 - Panel I -----------------------------------------------------------------
+# Figure S10 - Panel I -----------------------------------------------------------------
 # >>> Exploratory analysis Rainer dataset
 # Principal component analysis
 pca_output <- prcomp(t(ball_norm_rna_Iacobucci))
@@ -1339,7 +1527,70 @@ dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
-# Figure S10 - Panel A ----------------------------------------------------------------
+
+# Figure S11 ---------------------------------------------------------------------------
+# TF regulon activity of pro-B cell regulons across B-ALL subtypes
+
+# >>> Required packages
+library(ggplot2)
+library(BuenColors)
+library(tidyverse)
+library(ggpubr)
+
+# >>> Input data
+# B-ALL Gene Expression datasets
+load(paste0(data_wd,"/osfstorage-archive/05_B-ALL/BALL_Li.RData"), verbose = TRUE)
+
+# Regulons group
+regulons_group <- readRDS(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/regulons/TF_regulons_clusters.rds"))
+regulons_group_plot <- c(rep("1",length(regulons_group[[1]])),rep("2",length(regulons_group[[2]])),rep("3",length(regulons_group[[3]])),rep("4",length(regulons_group[[4]])),rep("5",length(regulons_group[[5]])))
+names(regulons_group_plot) <- c(regulons_group[[1]],regulons_group[[2]],regulons_group[[3]],regulons_group[[4]],regulons_group[[5]])
+
+
+# >>> Ploting
+# Plot colors
+ball_colors <- jdb_palette("corona", length(levels(ball_metadata_Li$mutation)))
+names(ball_colors) <- levels(ball_metadata_Li$mutation)
+
+# Plot  
+# Boxplots
+study <- c("Li")
+gsva_data_list <- list("Li"=gsva.BALL_Li)
+metadata_list <- list("Li"=ball_metadata_Li)
+target_gsva <- regulons_group[[3]]
+
+
+pdf(paste0(format(Sys.time(), "%Y%m%d"),"_boxplots_GSVA_regulons_BALL_paper_stats.pdf"), width=15, height=15)
+i <- "Li"
+dd <- gsva_data_list[[i]][rownames(gsva_data_list[[i]])%in%target_gsva,]
+data_to_plot <- data.frame(melt(dd),ALL_subgroup=rep(metadata_list[[i]]$mutation, each=nrow(dd)))
+ball_colors <- jdb_palette("corona", length(levels(ball_metadata_Li$mutation)))
+names(ball_colors) <- levels(ball_metadata_Li$mutation)
+
+p <- ggplot(data_to_plot,aes(x=ALL_subgroup,y=value, fill=ALL_subgroup)) +
+  geom_boxplot(outlier.size = 1) +
+  facet_wrap(~Var1, ncol=4) +
+  scale_fill_manual(values=ball_colors) +
+  theme_bw() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray") +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) +
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("ETV6-RUNX1/like","MEF2D fusions"),
+                                                                c("ETV6-RUNX1/like","TCF3-PBX1"),
+                                                                c("ETV6-RUNX1/like","DUX4 fusions"),
+                                                                c("ETV6-RUNX1/like","ZNF384 fusions"),
+                                                                c("ETV6-RUNX1/like","BCR-ABL1/ph-like"),
+                                                                c("ETV6-RUNX1/like","Hyperdiploidy"),
+                                                                c("ETV6-RUNX1/like","KTM2A fusions")),
+                     label = "p.signif") +
+  ylab("GSVA score")
+print(p)
+dev.off()
+
+# ------------------------------------------------------------------------------------ #
+
+
+
+# Figure S12 - Panel A ----------------------------------------------------------------
 # Heatmap representation of Pearson correlation matrices (rho) between samples based on RNA-seq data, 
 # ATAC-seq data, ATAC-seq data at all promoter OCRs, ATAC-seq data at all intronic OCRs, and ATAC-seq data at all distal intergenic OCRs. 
 
@@ -1480,7 +1731,7 @@ dev.off()
 
 
 
-# Figure S10 - Panel B ----------------------------------------------------------------
+# Figure S12 - Panel B ----------------------------------------------------------------
 # A t-SNE representation of OCRs identified in the study. Gini index is shown.
 
 # >>> Required packages
@@ -1571,7 +1822,7 @@ ggsave("umap_intergenic.pdf")
 
 
 
-# Figure S10 - Panel C ----------------------------------------------------------------
+# Figure S12 - Panel C ----------------------------------------------------------------
 # Variance component decomposition of the mRNA expression for every gene (as column), 
 # in a variance component model that discretizes the explanatory power of promoter OCRs (in green),
 # distal enhancer OCRs (in blue), and unexplained variance (in red). 
@@ -1695,11 +1946,95 @@ ggsave(paste0(format(Sys.time(), "%Y%m%d"),"_explained_variance_ordered_by_enhan
 
 
 
-# Figure S11 - Panel A ----------------------------------------------------------------
-# Variance component decomposition of the mRNA expression for every gene (as column), 
-# in a variance component model that discretizes the explanatory power of promoter OCRs (in green),
-# distal enhancer OCRs (in blue), and unexplained variance (in red). 
-# The limix python library was used for fitting the regression models (https://github.com/limix/limix).
+# Figure S13 - Panel A ----------------------------------------------------------------
+# Histone compartment distribution; overlap with out OCRs
+# >>> Required packages
+library(ggplot2)
+library(GenomicRanges)
+
+# >>> Input data
+#HiC compartments
+ocr_gene <- readRDS(paste0(data_wd,"/osfstorage-archive/02_cCREs_OCR_gene_links/public_epigenetic_data_for_validation/atac_OCR_annotation_extended.rds"))
+ocr_gene$peak <- paste0(ocr_gene$chr,"_",ocr_gene$start,"_",ocr_gene$end)
+# >>> Plotting
+# Plot colors
+
+# Plot
+#Barplot output summary
+
+data_to_plot <- ocr_gene[ocr_gene$annotation_simplified%in%c("Promoter","Intron","Distal Intergenic"),] #34,370
+
+# Subset for All
+p1 <- ggplot(data_to_plot, aes(x=annotation_simplified, fill=histone)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+
+# Subset for cCREs
+p2 <- ggplot(data_to_plot[data_to_plot$CRE=="yes",], aes(x=annotation_simplified, fill=histone)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+
+# Subset for no cCREs
+p3 <- ggplot(data_to_plot[data_to_plot$CRE=="no",], aes(x=annotation_simplified, fill=histone)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+
+p <- p1+p2+p3
+
+ggsave(filename = paste(format(Sys.Date(),"%Y%m%d"),"_histone_marks.pdf",sep=""), plot = p)
+# ------------------------------------------------------------------------------------ #
+
+
+
+# Figure S13 - Panel B ----------------------------------------------------------------
+# HiC compartment distribution; overlap with out OCRs
+# >>> Required packages
+library(ggplot2)
+library(GenomicRanges)
+
+# >>> Input data
+#HiC compartments
+ocr_gene <- readRDS(paste0(data_wd,"/osfstorage-archive/02_cCREs_OCR_gene_links/public_epigenetic_data_for_validation/atac_OCR_annotation_extended.rds"))
+ocr_gene$peak <- paste0(ocr_gene$chr,"_",ocr_gene$start,"_",ocr_gene$end)
+# >>> Plotting
+# Plot colors
+
+# Plot
+#Barplot output summary
+
+data_to_plot <- ocr_gene[ocr_gene$annotation_simplified%in%c("Promoter","Intron","Distal Intergenic"),] #34,370
+
+# Subset for All
+
+p1 <- ggplot(data_to_plot, aes(x=annotation_simplified, fill=HiC_compartment)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+  
+# Subset for cCREs
+p2 <- ggplot(data_to_plot[data_to_plot$CRE=="yes",], aes(x=annotation_simplified, fill=HiC_compartment)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+
+# Subset for no cCREs
+p3 <- ggplot(data_to_plot[data_to_plot$CRE=="no",], aes(x=annotation_simplified, fill=HiC_compartment)) +
+  geom_bar(position="fill") +
+  theme_classic() +
+  xlab("OCR")
+
+p <- p1+p2+p3
+
+ggsave(filename = paste(format(Sys.Date(),"%Y%m%d"),"_HiC.pdf",sep=""), plot = p)
+# ------------------------------------------------------------------------------------ #
+
+
+
+# Figure S13 - Panel C ----------------------------------------------------------------
+# RNA and ATAC heatmap for PC-HiC validated cCREs
 
 # >>> Required packages
 library(ggplot2)
@@ -1708,21 +2043,90 @@ library(tidyverse)
 library(Ternary)
 
 # >>> Input data
-# Variance component model
-sigmas2 <- read.csv(paste0(data_wd,"/osfstorage-archive/08_atac_rna_variance_decomposition/sigmas2.csv"), row.names = 1)
-sigmas2_permuted <- read.csv(paste0(data_wd,"/osfstorage-archive/08_atac_rna_variance_decomposition/sigmas2_permuted.csv"), row.names = 1)
+# Gene Expression data
+rna <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_norm_data.rds"))
+rna_metadata <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_metadata.rds"))
+rna_anno <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_gene_annotation.rds"))
 
-# DEGs by transitions
-deg <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/differential_expression_analysis/rna_deg_clustering.rds"))
+# Chromatin accessibility data
+atac <- readRDS(paste0(data_wd,"/osfstorage-archive/01_atac_seq_data/atac_norm_data.rds"))
+atac_metadata <- readRDS(paste0(data_wd,"/osfstorage-archive/01_atac_seq_data/atac_metadata.rds"))
+atac_anno <- readRDS(paste0(data_wd,"/osfstorage-archive/01_atac_seq_data/atac_OCR_annotation.rds"))
 
-# >>> Computing
+# GRN data
+tf_ocr_gene <- read.table(paste0(data_wd,"/osfstorage-archive/04_gene_regulatory_networks/tf_ocr_gene_interactions_curated.txt"),
+                          sep="\t",
+                          dec=",",
+                          header=TRUE)
+
+ocr_gene <- readRDS(paste0(data_wd,"/osfstorage-archive/02_cCREs_OCR_gene_links/public_epigenetic_data_for_validation/promoter_capture_HiC/candidate_CREs_plus_PCHiC.rds"))
 
 # >>> Plotting
+# Plot colors
+bcell_colors <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/bcell_colors.rds"))
+bcell_colors <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/bcell_colors.rds"))
+my_colors_rna <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/rna_expression_colors.rds"))
+my_colors_atac <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/atac_colors.rds"))
 
+
+enhancer_ocr_gene <- ocr_gene[ocr_gene$overlap_ER_Biola_ourgene_in_baitName=="TRUE",] #2,161
+rownames(enhancer_ocr_gene) <- paste0(enhancer_ocr_gene$hgnc_symbol," : ",enhancer_ocr_gene$peak)
+
+#RNA data
+data_to_plot <- t(scale(t(rna[enhancer_ocr_gene$gene,]),center=TRUE, scale=TRUE))
+rownames(data_to_plot) <- rownames(enhancer_ocr_gene)
+
+ha = HeatmapAnnotation(stage = rna_metadata$CellType,
+                       col = list(stage = bcell_colors))
+
+
+target_genes <- c("PAX5","MS4A1","CD79A","CD79B","IKZF1","TCF3","EBF1")
+
+sel_pos <- vector()
+target_genes2 <- vector()
+for(i in 1:length(target_genes)){
+  ss <- grep(target_genes[i],rownames(data_to_plot))
+  if(length(ss)>0){
+    sel_pos <- c(sel_pos,ss)
+    target_genes2 <- c(target_genes2,rownames(data_to_plot)[ss])
+  }
+}
+
+rha_text <- rowAnnotation(genes=anno_mark(at = sel_pos, labels = target_genes2))
+
+exprs_pattern <- Heatmap(data_to_plot, name = "Expression patterns",
+                         top_annotation = ha, column_order=order(rna_metadata$CellType), 
+                         right_annotation = rha_text, 
+                         col=colorRamp2(seq(-3,3, length.out=length(my_colors_rna)),my_colors_rna),
+                         show_column_names = FALSE, show_row_names = FALSE, 
+                         cluster_rows = TRUE,
+                         cluster_columns = FALSE, use_raster=TRUE, width = unit(4, "cm"))
+
+
+#ATAC data
+data_to_plot <- t(scale(t(atac[enhancer_ocr_gene$peak,]),center=TRUE, scale=TRUE))
+rownames(data_to_plot) <- rownames(enhancer_ocr_gene)
+
+ha = HeatmapAnnotation(stage = atac_metadata$CellType,
+                       col = list(stage = bcell_colors))
+
+atac_pattern <- Heatmap(data_to_plot, name = "Expression patterns",
+                        top_annotation = ha, column_order=order(atac_metadata$CellType), 
+                        col=colorRamp2(seq(-3,3, length.out=length(my_colors_atac)),my_colors_atac),
+                        show_column_names = FALSE, show_row_names = FALSE, 
+                        cluster_rows = TRUE,
+                        cluster_columns = FALSE, use_raster=TRUE, width = unit(4, "cm"))
+
+
+pdf(paste(format(Sys.time(), "%Y%m%d"),"_heatmap_cCREs_validated_by_PCHiC.pdf",sep=""), width=12)
+atac_pattern + exprs_pattern
+dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
-# Figure S12 ---------------------------------------------------------------------
+
+
+# Figure S14 ---------------------------------------------------------------------
 
 # B-ALL Public datasets analysis -------------------------------------------------
 ###-----------------------------------------------------------------------------------###
@@ -1898,7 +2302,7 @@ save(ball_norm_rna_Singh,ball_metadata_Singh,gsva.BALL_Singh,file="BALL_Singh.RD
 ###-----------------------------------------------------------------------------------###
 
 
-# Figure S12 - Panel A,B ----------------------------------------------------------------
+# Figure S14 - Panel A,B ----------------------------------------------------------------
 ###-----------------------------------------------------------------------------------###
 # ****** Singh dataset (GSE153670) ****** #
 ###  Singh dataset ----------
@@ -2079,7 +2483,7 @@ dev.off()
 
 
 
-# Figure S12 - Panel C,D ----------------------------------------------------------------
+# Figure S14 - Panel C,D ----------------------------------------------------------------
 ###-----------------------------------------------------------------------------------###
 # ****** Zinngrebe dataset (GSE140556) ****** #
 ###  Zinngrebe dataset ----------
