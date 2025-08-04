@@ -1125,6 +1125,153 @@ dev.off()
 # ------------------------------------------------------------------------------------ #
 
 
+
+# Figure S8 - Panel B, C ------------------------------------------------------------------
+# In-house single-cell data - UMAP with cell annotation
+
+# >>> Required packages
+library(Seurat)
+
+# >>> Input data
+# In-house single-cell dataset - seurat object
+scInHouse <- readRDS("scInHouse.rds")
+
+# >>> Ploting
+# Plot colors
+bcell_colors_sc <- readRDS(paste0(data_wd,"/osfstorage-archive/00_plot_parameters/bcell_colors_sc.rds"))
+
+# Plot  
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_UMAP_InHouse_cell_annotation.pdf"), height=4, width=5)
+ DimPlot(scInHouse, reduction = "umap", label = TRUE, group.by="cell_type_reannotation", cols = bcell_colors_sc)
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
+
+
+# Figure S8 - Panel D, E ------------------------------------------------------------------
+# Single-cell analysis - Violin plot with gene markers
+
+# >>> Required packages
+library(Seurat)
+
+# >>> Input data
+# Public single-cell dataset - seurat object
+scPublic <- readRDS("scPublic.rds")
+# In-house single-cell dataset - seurat object
+scInHouse <- readRDS("scInHouse.rds")
+
+# >>> Ploting
+# Plot  
+features<- c("AVP","CD34","CD38","MME","IL7R","CD19","CD79A","CD79B","DNTT","RAG1","RAG2","VPREB1","VPREB3","MKI67","EBF1","PAX5","SPIB","IGHM","IGHD","MS4A1","CD27")
+
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_bcell_public_VlnPlot_markers.pdf"))
+VlnPlot(scPublic, group.by="cell_type_reannotation", features=features, pt.size = 0, stack=T, flip=T)
+dev.off()
+
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_bcell_inhouse_markers.pdf"))
+VlnPlot(scInHouse, group.by="cell_type_reannotation", features=features, pt.size = 0, stack=T, flip=T)
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
+
+# Figure S8 - Panel F, G------------------------------------------------------------------
+# Single-cell analysis - UMAP with cell cycle Phase
+
+# >>> Required packages
+library(Seurat)
+
+# >>> Input data
+# Public single-cell dataset - seurat object
+scPublic <- readRDS("scPublic.rds")
+# In-house single-cell dataset - seurat object
+scInHouse <- readRDS("scInHouse.rds")
+
+# >>> Ploting
+# Plot  
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_bcell_UMAPs_cell_cycle.pdf"), height=5, width=5)
+  DimPlot(scPublic, reduction = "umap.integrated.harmony_subset", label = TRUE, group.by = "Phase")
+  DimPlot(scInHouse, reduction = "umap", label = TRUE, group.by = "Phase")
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
+
+
+# Figure S8 - Panel H, I -----------------------------------------------------------------
+# Single-cell analysis - UMAP with cell cycle Phase
+
+# >>> Required packages
+library(Seurat)
+library(AUCell)
+library(BuenColors)
+
+# >>> Input data
+# Public single-cell dataset - seurat object
+scPublic <- readRDS("scPublic.rds")
+# In-house single-cell dataset - seurat object
+scInHouse <- readRDS("scInHouse.rds")
+# Human B-cell subpopulations biomarkers
+bcell_biomarkers <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/differential_expression_analysis/Bcell_biomarkers.rds"))
+# Transform to Gene ID
+rna_anno <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/rna_gene_annotation.rds"))
+bcell_biomarkers_gene <- lapply(bcell_biomarkers,FUN=function(x){return(rna_anno[x,"hgnc_symbol"])})
+# DEGs
+deg <- readRDS(paste0(data_wd,"/osfstorage-archive/01_rna_seq_data/differential_expression_analysis/rna_deg_clustering.rds"))
+deg <- deg[,5:12]
+  
+# >>> Computing
+# Public
+# Calculate enrichment scores
+exprMatrix <- GetAssayData(scPublic, assay = "RNA", layer = "data")
+# Generar rankings por célula
+cells_rankings <- AUCell_buildRankings(exprMatrix, nCores = 1, plotStats = TRUE)
+cells_AUC <- AUCell_calcAUC(bcell_biomarkers_gene, cells_rankings)
+# Convertir a data frame
+auc_matrix <- as.data.frame(getAUC(cells_AUC))
+# Agregar al objeto Seurat como metadata
+scPublic <- AddMetaData(scPublic, metadata = t(auc_matrix))
+
+# In-house
+# Subset, with specific genes per cell subpopulation
+bcell_biomarkers_gene_subset <- bcell_biomarkers_gene[1:3]
+sel <- which(deg[,"HSC"]==1)
+bcell_biomarkers_gene_subset[["HSC"]] <- rna_anno[rownames(deg)[sel],"hgnc_symbol"]
+sel <- which(deg[,"CLP"]==1 & deg[,"HSC"]==0)
+bcell_biomarkers_gene_subset[["CLP"]] <- rna_anno[rownames(deg)[sel],"hgnc_symbol"]
+sel <- which(deg[,"ProB"]==1 & deg[,"HSC"]==0 & deg[,"CLP"]==0)
+bcell_biomarkers_gene_subset[["proB"]] <- rna_anno[rownames(deg)[sel],"hgnc_symbol"]
+
+# Calculate enrichment scores
+exprMatrix <- GetAssayData(scInHouse, assay = "RNA", layer = "data")
+# Generar rankings por célula
+cells_rankings <- AUCell_buildRankings(exprMatrix, nCores = 1, plotStats = TRUE)
+cells_AUC <- AUCell_calcAUC(bcell_biomarkers_gene_subset, cells_rankings)
+# Convertir a data frame
+auc_matrix <- as.data.frame(getAUC(cells_AUC))
+# Agregar al objeto Seurat como metadata
+scInHouse <- AddMetaData(scInHouse, metadata = t(auc_matrix))
+
+
+# >>> Ploting
+# Plot  
+features <-  names(bcell_biomarkers)
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_bcell_UMAPs_Bcell_markers_public.pdf"),width = 5, height = 5)
+for(i in features){
+print(FeaturePlot(scPublic, reduction = "umap.integrated.harmony_subset", features=i) +
+  scale_color_gradientn(colors = jdb_palette("solar_extra")))
+}
+dev.off()
+
+features <-  names(bcell_biomarkers_gene_subset)
+pdf(paste0(format(Sys.time(),"%Y%m%d"),"_bcell_UMAPs_Bcell_markers_inhouse.pdf"),width = 5, height = 5)
+for(i in features){
+print(FeaturePlot(scInHouse, reduction = "umap", features=i) +
+  scale_color_gradientn(colors = jdb_palette("solar_extra")))
+}
+dev.off()
+# ------------------------------------------------------------------------------------ #
+
+
+
 # Figure S9 - Panel A-- -----------------------------------------------------------------
 # Correlation between TF regulon score (Fig2A) from bulk and single-cell (Fig4C,D).
 
