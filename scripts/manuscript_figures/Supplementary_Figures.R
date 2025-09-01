@@ -1272,7 +1272,7 @@ dev.off()
 
 
 
-# Figure S9 - Panel A-- -----------------------------------------------------------------
+# Figure S9 - Panel A-C -----------------------------------------------------------------
 # Correlation between TF regulon score (Fig2A) from bulk and single-cell (Fig4C,D).
 
 # >>> Required packages
@@ -1454,12 +1454,6 @@ pp2 <- ggplot(data_to_plot, aes(bulk,sc)) +
 
 
 ggsave(filename=paste0(format(Sys.time(), "%Y%m%d"),"_scatterplot_bulk_scInhouse.pdf"),plot=pp2, width=8)
-
-# ------------------------------------------------------------------------------------ #
-
-
-
-# Figure S9 - Panel B-C -----------------------------------------------------------------
 
 # ------------------------------------------------------------------------------------ #
 
